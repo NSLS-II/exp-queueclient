@@ -1,4 +1,5 @@
 import logging
+import time as ttime
 
 import requests
 
@@ -23,13 +24,18 @@ class BlueskyHttpserverSession:
         log.debug("self.bluesky_httpserver_url: '%s'", self._bluesky_httpserver_url)
 
     def __enter__(self):
-        self.environment_open()
-        # useful to put a pause here?
+        # TODO: store the response in case someone wants to see it
+        environment_open_response = self.environment_open()
+        if environment_open_response.json()["success"] is False:
+            raise Exception(
+                f"failed to open an environment\n{environment_open_response.json()}"
+            )
         return self
 
     def __exit__(self, *exc):
+        # TODO: store the response in case someone wants to see it
         self.environment_close()
-        # useful to put a pause here?
+        # not so useful to check for failure since that means there is was open environment
         return False
 
     def httpserver_get(self, endpoint, **kwargs):
@@ -58,6 +64,56 @@ class BlueskyHttpserverSession:
         )
         return endpoint_response
 
+    def wait_for_status(self, target_status, max_status_checks=3):
+        """Wait for self.status() to match the specified target_status.
+
+        Parameters
+        ----------
+        target_status:
+            subset of status response JSON:
+                (qserver) vagrant@vagrant:~$ qserver status
+                Arguments: ['status']
+                20:05:16 - MESSAGE:
+                {'devices_allowed_uid': 'a2f32d48-22dd-487a-ac9e-852964adbc4f',
+                 'items_in_history': 0,
+                 'items_in_queue': 1,
+                 'manager_state': 'idle',
+                 'msg': 'RE Manager',
+                 'pause_pending': False,
+                 'plan_history_uid': '0269bc0e-e024-4367-b28b-df796f5e1d94',
+                 'plan_queue_mode': {'loop': False},
+                 'plan_queue_uid': '6a23166e-d5b1-403b-a985-88577e89f222',
+                 'plans_allowed_uid': '66b3a3e0-916f-41fd-9b2d-0ac76d1e7748',
+                 'queue_stop_pending': False,
+                 're_state': 'idle',
+                 'run_list_uid': '1d70095c-853a-4a3d-84ed-8b3cbb215824',
+                 'running_item_uid': None,
+                 'worker_environment_exists': True}
+        max_status_checks:
+            positive integer number of status checks with 1s sleep between checks
+
+        Returns
+        -------
+            True if the target status has been achieved, False otherwise
+        """
+        for _ in range(max_status_checks):
+            status_response = self.status()
+            status_json = status_response.json()
+
+            if all(
+                [
+                    status_json[target_status_key] == target_status_value
+                    for target_status_key, target_status_value in target_status.items()
+                ]
+            ):
+                return True
+            else:
+                print(f"status:\n{status_json}")
+                print(f"does not match target status:\n{target_status}")
+                ttime.sleep(1)
+
+        return False
+
     def environment_open(self):
         """Open a qserver environment.
 
@@ -68,7 +124,7 @@ class BlueskyHttpserverSession:
 
         """
 
-        self.httpserver_post(endpoint="environment/open")
+        return self.httpserver_post(endpoint="environment/open")
 
     def environment_close(self):
         """Close the HTTP session.
@@ -76,10 +132,10 @@ class BlueskyHttpserverSession:
         This is the counterpart to `environment_open`. Client code should prefer the context manager protocol.
 
         """
-        self.httpserver_post(endpoint="environment/close")
+        return self.httpserver_post(endpoint="environment/close")
 
     def environment_destroy(self):
-        self.httpserver_post(endpoint="environment/destroy")
+        return self.httpserver_post(endpoint="environment/destroy")
 
     def status(self):
         return self.httpserver_get("status")
@@ -103,9 +159,22 @@ class BlueskyHttpserverSession:
     def queue_stop_cancel(self):
         return self.httpserver_post("queue/stop/cancel")
 
-    def queue_item_add(self, item_name, item_args, item_type):
+    def queue_item_add(
+        self, item_name, item_args=None, item_kwargs=None, item_type="plan"
+    ):
+        if item_args is None:
+            item_args = []
+
+        if item_kwargs is None:
+            item_kwargs = {}
+
         item_json = {
-            "item": {"name": item_name, "args": item_args, "item_type": item_type}
+            "item": {
+                "name": item_name,
+                "args": item_args,
+                "kwargs": item_kwargs,
+                "item_type": item_type,
+            }
         }
         return self.httpserver_post("queue/item/add", json=item_json)
 
@@ -140,10 +209,10 @@ class BlueskyHttpserverSession:
         raise NotImplementedError()
 
     def history_get(self):
-        raise NotImplementedError()
+        return self.httpserver_get("history/get")
 
     def history_clear(self):
-        raise NotImplementedError()
+        return self.httpserver_post("history/clear")
 
     def re_pause(self):
         raise NotImplementedError()

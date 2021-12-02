@@ -1,3 +1,7 @@
+import time as ttime
+
+from contextlib import contextmanager
+
 import pytest
 
 from exp_queueclient import BlueskyHttpserverSession
@@ -9,12 +13,31 @@ def bluesky_httpserver_url():
 
 
 @pytest.fixture
-def bluesky_httpserver_session(bluesky_httpserver_url):
+def clean_bluesky_httpserver_session(bluesky_httpserver_url):
     """
-    A factory-as-a-fixture.
+    A factory-as-a-fixture-and-context-manager.
     """
 
-    def bluesky_httpserver_session_():
-        return BlueskyHttpserverSession(bluesky_httpserver_url=bluesky_httpserver_url)
+    @contextmanager
+    def _clean_bluesky_httpserver_session(bluesky_httpserver_url_=None):
+        if bluesky_httpserver_url_ is None:
+            bluesky_httpserver_url_ = bluesky_httpserver_url
 
-    return bluesky_httpserver_session_
+        try:
+            session = BlueskyHttpserverSession(
+                bluesky_httpserver_url=bluesky_httpserver_url_
+            )
+            session.environment_destroy()
+            session.history_clear()
+            session.queue_clear()
+            ttime.sleep(3)
+
+            yield None
+
+        finally:
+            session.history_clear()
+            session.queue_clear()
+            session.environment_destroy()
+            ttime.sleep(3)
+
+    return _clean_bluesky_httpserver_session
